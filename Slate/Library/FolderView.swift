@@ -117,7 +117,7 @@ struct FolderView: View {
 
     private func open(_ entry: LibraryEntry) {
         if entry.isNotebook {
-            lib.openNotebook = OpenNotebook(url: entry.url)
+            lib.open(entry.url)
         } else {
             selection = .folder(entry.url)
         }

@@ -24,6 +24,7 @@ struct NotebookPaths {
     var inkDir: URL { root.appendingPathComponent("ink", isDirectory: true) }
     var thumb: URL { root.appendingPathComponent("thumb.png") }
     var imagesDir: URL { root.appendingPathComponent("images", isDirectory: true) }
+    var audioDir: URL { root.appendingPathComponent("audio", isDirectory: true) }
 
     func ink(_ id: UUID) -> URL { inkDir.appendingPathComponent(id.uuidString + ".drawing") }
 }

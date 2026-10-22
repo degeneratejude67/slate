@@ -34,6 +34,8 @@ targets:
         CFBundleInfoDictionaryVersion: "6.0"
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
+        NSMicrophoneUsageDescription: Slate records lectures so you can tap your notes later and hear what was being said.
+        NSPhotoLibraryUsageDescription: Slate adds photos you choose to your notebook pages.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UIRequiresFullScreen: false

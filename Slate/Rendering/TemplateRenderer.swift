@@ -182,7 +182,7 @@ enum TemplateRenderer {
             while y < h {
                 var x: CGFloat = row % 2 == 0 ? step / 2 : step
                 while x < w {
-                    c.fillEllipse(in: CGRect(x: x - 1.1 * s, y: y - 1.1 * s, width: 2.2 * s, height: 2.2 * s))
+                    c.fillEllipse(in: CGRect(x: x - 1.4 * s, y: y - 1.4 * s, width: 2.8 * s, height: 2.8 * s))
                     x += step
                 }
                 y += rowH; row += 1

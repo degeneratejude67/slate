@@ -272,6 +272,110 @@ final class SlateTests: XCTestCase {
         XCTAssertLessThanOrEqual(max(loaded.size.width * loaded.scale, loaded.size.height * loaded.scale), 2400.5)
     }
 
+    /// Ink strokes that trace the outlines of letters, so Vision has "handwriting" to read.
+    private func strokes(spelling text: String, size: CGFloat, at origin: CGPoint) -> [PKStroke] {
+        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
+        var strokes: [PKStroke] = []
+        var x = origin.x
+        for scalar in text.utf16 {
+            var char = scalar
+            var glyph: CGGlyph = 0
+            CTFontGetGlyphsForCharacters(font, &char, &glyph, 1)
+            var advance = CGSize.zero
+            CTFontGetAdvancesForGlyphs(font, .horizontal, &glyph, &advance, 1)
+            if let path = CTFontCreatePathForGlyph(font, glyph, nil) {
+                var subpaths: [[CGPoint]] = []
+                var current: [CGPoint] = []
+                let place = { (p: CGPoint) in CGPoint(x: x + p.x, y: origin.y - p.y) }
+                path.applyWithBlock { element in
+                    let e = element.pointee
+                    switch e.type {
+                    case .moveToPoint:
+                        if current.count > 1 { subpaths.append(current) }
+                        current = [place(e.points[0])]
+                    case .addLineToPoint:
+                        current.append(place(e.points[0]))
+                    case .addQuadCurveToPoint:
+                        current.append(place(e.points[1]))
+                    case .addCurveToPoint:
+                        current.append(place(e.points[2]))
+                    case .closeSubpath:
+                        if let first = current.first { current.append(first) }
+                    @unknown default:
+                        break
+                    }
+                }
+                if current.count > 1 { subpaths.append(current) }
+                for sub in subpaths {
+                    let points = sub.enumerated().map { i, p in
+                        PKStrokePoint(location: p, timeOffset: Double(i) * 0.01, size: CGSize(width: 3, height: 3),
+                                      opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+                    }
+                    strokes.append(PKStroke(ink: PKInk(.pen, color: .black),
+                                            path: PKStrokePath(controlPoints: points, creationDate: Date()),
+                                            transform: .identity, mask: nil))
+                }
+            }
+            x += advance.width
+        }
+        return strokes
+    }
+
+    func testHandwritingIsRecognised() {
+        let drawing = PKDrawing(strokes: strokes(spelling: "PELTON", size: 90, at: CGPoint(x: 40, y: 200)))
+        let text = SearchIndex.recognize(drawing, pageSize: a4)
+        XCTAssertTrue(text.uppercased().contains("PELTON"), "Vision read: \(text)")
+    }
+
+    func testSearchFindsTextBoxesPDFTextAndTitles() async throws {
+        let store = NotebookStore(root: tmp)
+        let pdfURL = tmp.appendingPathComponent("Fluid Machines.pdf")
+        try SamplePDF.make().write(to: pdfURL)
+        let imported = try store.importPDF(from: pdfURL, in: tmp)
+        let doc = try NotebookDocument(url: imported)
+        doc.setItems([PageItem(kind: .text, frame: CGRect(x: 10, y: 10, width: 200, height: 30), text: "Euler turbine equation")],
+                     onPage: 1)
+        try doc.saveMeta()
+        await SearchIndexer.shared.indexMissing([imported])
+
+        let pdfHits = SearchIndex.search("pelton", in: store)
+        XCTAssertTrue(pdfHits.contains { $0.page == 0 && $0.source == .pdf }, "\(pdfHits.map(\.snippet))")
+        let boxHits = SearchIndex.search("EULER", in: store)
+        XCTAssertTrue(boxHits.contains { $0.page == 1 && $0.source == .text })
+        XCTAssertTrue(SearchIndex.search("fluid", in: store).contains { $0.source == .title })
+        XCTAssertTrue(SearchIndex.search("zz", in: store).isEmpty)
+    }
+
+    func testExportedPDFKeepsPagesAndDrawsInk() throws {
+        let store = NotebookStore(root: tmp)
+        let doc = try NotebookDocument(url: try store.createNotebook(title: "Export", paper: .ruled, size: a4, pages: 2,
+                                                                     cover: .slate, in: tmp))
+        doc.setItems([PageItem(kind: .text, frame: CGRect(x: 40, y: 40, width: 200, height: 30), text: "Hello")], onPage: 0)
+        let ink = PKDrawing(strokes: [stroke(at: CGPoint(x: 100, y: 300))])
+        let data = ExportRenderer.pdf(of: doc, drawings: [ink, PKDrawing()])
+        let exported = try XCTUnwrap(PDFDocument(data: data))
+        XCTAssertEqual(exported.pageCount, 2)
+        XCTAssertEqual(PageGeometry.displaySize(try XCTUnwrap(exported.page(at: 0))).width, a4.width, accuracy: 0.5)
+        XCTAssertTrue(exported.page(at: 0)?.string?.contains("Hello") ?? false)
+
+        let zip = tmp.appendingPathComponent("backup.zip")
+        try ExportRenderer.zip(folder: doc.url, to: zip)
+        let size = try FileManager.default.attributesOfItem(atPath: zip.path)[.size] as? Int ?? 0
+        XCTAssertGreaterThan(size, 1000)
+    }
+
+    func testRecordingMatchFindsTheMoment() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let a = Recording(id: UUID(), file: "a.m4a", started: start, duration: 600)
+        let b = Recording(id: UUID(), file: "b.m4a", started: start.addingTimeInterval(3600), duration: 300)
+        let hit = Recording.match(start.addingTimeInterval(3700), in: [a, b])
+        XCTAssertEqual(hit?.0.id, b.id)
+        XCTAssertEqual(hit?.1 ?? -1, 100, accuracy: 0.001)
+        XCTAssertNil(Recording.match(start.addingTimeInterval(1000), in: [a, b]))
+        XCTAssertEqual(Recording.clock(3725), "1:02:05")
+        XCTAssertEqual(Recording.clock(65), "1:05")
+    }
+
     func testThumbnailHasPageAspect() throws {
         let doc = try XCTUnwrap(PDFDocument(data: SamplePDF.make()))
         let image = Thumbnailer.image(page: doc.page(at: 0), pageSize: slide,

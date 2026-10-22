@@ -7,7 +7,7 @@ import Combine
 /// page views and page items that follows the canvas's scroll and zoom. PencilKit handles
 /// pen input, palm rejection, zoom-sharp ink, lasso and undo; pages stay plain PDF pages.
 final class NotebookCanvasController: UIViewController, PKCanvasViewDelegate, UITextViewDelegate,
-                                      UIEditMenuInteractionDelegate {
+                                      UIEditMenuInteractionDelegate, UIGestureRecognizerDelegate {
     let document: NotebookDocument
     let state: EditorState
     let canvas = PKCanvasView()
@@ -39,6 +39,11 @@ final class NotebookCanvasController: UIViewController, PKCanvasViewDelegate, UI
     private var undoTap: UITapGestureRecognizer!
     private var redoTap: UITapGestureRecognizer!
     private var itemTap: UITapGestureRecognizer!
+    private var laserPan: UIPanGestureRecognizer!
+    private var replayTap: UITapGestureRecognizer!
+    private let laserView = UIView()
+    private var laserLayer: CAShapeLayer?
+    private var laserPath = UIBezierPath()
 
     private struct Selection { let page: Int; let id: UUID }
     private struct TextEdit { let page: Int; let id: UUID; let view: UITextView; let baseline: [PageItem] }
@@ -89,6 +94,8 @@ final class NotebookCanvasController: UIViewController, PKCanvasViewDelegate, UI
         overlay.onDragEnded = { [weak self] in self?.finishDrag() }
         overlay.onTap = { [weak self] point in self?.selectionTapped(at: point) }
         view.addSubview(overlay)
+        laserView.isUserInteractionEnabled = false
+        view.addSubview(laserView)
 
         undoTap = UITapGestureRecognizer(target: self, action: #selector(undoTapped))
         undoTap.numberOfTouchesRequired = 2
@@ -97,9 +104,19 @@ final class NotebookCanvasController: UIViewController, PKCanvasViewDelegate, UI
         undoTap.require(toFail: redoTap)
         itemTap = UITapGestureRecognizer(target: self, action: #selector(itemTapped(_:)))
         itemTap.isEnabled = false
+        itemTap.delegate = self
+        laserPan = UIPanGestureRecognizer(target: self, action: #selector(laserPanned(_:)))
+        laserPan.maximumNumberOfTouches = 1
+        laserPan.isEnabled = false
+        replayTap = UITapGestureRecognizer(target: self, action: #selector(replayTapped(_:)))
+        replayTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        replayTap.isEnabled = false
         canvas.addGestureRecognizer(undoTap)
         canvas.addGestureRecognizer(redoTap)
         canvas.addGestureRecognizer(itemTap)
+        canvas.addGestureRecognizer(laserPan)
+        canvas.addGestureRecognizer(replayTap)
+        state.audio.document = document
 
         state.controller = self
         var drawings: [PKDrawing] = []
@@ -122,10 +139,40 @@ final class NotebookCanvasController: UIViewController, PKCanvasViewDelegate, UI
         NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
             .sink { [weak self] _ in self?.saveNow() }
             .store(in: &bag)
+        state.audio.$current
+            .sink { [weak self] recording in self?.replayTap.isEnabled = recording != nil }
+            .store(in: &bag)
+        indexIfNeeded()
+    }
+
+    /// Our taps work alongside the canvas's own gestures instead of waiting for them to fail.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === itemTap
+    }
+
+    /// While a recording is open, a finger tap on ink plays the audio from when it was written.
+    @objc private func replayTapped(_ g: UITapGestureRecognizer) {
+        let point = notebookPoint(fromView: g.location(in: view))
+        let reach = 14 / max(canvas.zoomScale, 0.1)
+        var best: (stroke: PKStroke, distance: CGFloat)?
+        for stroke in canvas.drawing.strokes where stroke.renderBounds.insetBy(dx: -reach, dy: -reach).contains(point) {
+            for p in stroke.path.interpolatedPoints(by: .distance(4)) {
+                let q = p.location.applying(stroke.transform)
+                let d = hypot(q.x - point.x, q.y - point.y)
+                if d < reach && d < (best?.distance ?? .greatestFiniteMagnitude) { best = (stroke, d) }
+            }
+        }
+        guard let stroke = best?.stroke else { return }
+        if !state.audio.jump(to: stroke.path.creationDate) {
+            state.errorMessage = "That ink wasn't written during a recording."
+        }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        state.audio.stopRecording()
+        state.audio.stopPlayback()
         saveNow()
     }
 
@@ -133,6 +180,7 @@ final class NotebookCanvasController: UIViewController, PKCanvasViewDelegate, UI
         super.viewDidLayoutSubviews()
         backdropHost.frame = view.bounds
         overlay.frame = view.bounds
+        laserView.frame = view.bounds
         if canvas.frame != view.bounds { canvas.frame = view.bounds }
         guard view.bounds.width > 0, layout.contentSize.width > 0 else { return }
 
@@ -260,8 +308,98 @@ final class NotebookCanvasController: UIViewController, PKCanvasViewDelegate, UI
     }
 
     private func updatePageLabel() {
-        let label = "\(currentPageIndex + 1) / \(document.pageCount)"
+        let index = currentPageIndex
+        let label = "\(index + 1) / \(document.pageCount)"
         if state.pageLabel != label { state.pageLabel = label }
+        let marked = document.meta.pages[safe: index].map { document.meta.bookmarks.contains($0.id) } ?? false
+        if state.isBookmarked != marked { state.isBookmarked = marked }
+    }
+
+    func toggleBookmark() {
+        guard let id = document.meta.pages[safe: currentPageIndex]?.id else { return }
+        if let i = document.meta.bookmarks.firstIndex(of: id) {
+            document.meta.bookmarks.remove(at: i)
+        } else {
+            document.meta.bookmarks.append(id)
+        }
+        scheduleMetaSave()
+        updatePageLabel()
+        state.pagesRevision += 1
+    }
+
+    // MARK: Export
+
+    /// Writes the notebook (or the current page) as a PDF with vector ink, for sharing.
+    func exportPDF(currentPageOnly: Bool) -> URL? {
+        saveNow()
+        let index = currentPageIndex
+        let range = currentPageOnly ? index..<(index + 1) : 0..<document.pageCount
+        let data = ExportRenderer.pdf(of: document, drawings: pageDrawings(), pages: range)
+        let base = document.meta.title + (currentPageOnly ? " - page \(index + 1)" : "")
+        let url = ExportRenderer.exportFolder.appendingPathComponent(safeFileName(base) + ".pdf")
+        do {
+            try data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            state.errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// The whole notebook folder (PDF, ink, pictures) as a zip, to keep or move elsewhere.
+    func exportBackup() -> URL? {
+        saveNow()
+        let url = ExportRenderer.exportFolder.appendingPathComponent(safeFileName(document.meta.title) + ".slate.zip")
+        do {
+            try ExportRenderer.zip(folder: document.url, to: url)
+            return url
+        } catch {
+            state.errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    private func safeFileName(_ name: String) -> String {
+        let cleaned = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        return cleaned.isEmpty ? "Notebook" : cleaned
+    }
+
+    // MARK: Laser pointer
+
+    @objc private func laserPanned(_ g: UIPanGestureRecognizer) {
+        let p = g.location(in: view)
+        switch g.state {
+        case .began:
+            laserPath = UIBezierPath()
+            laserPath.move(to: p)
+            let layer = CAShapeLayer()
+            layer.strokeColor = UIColor(red: 1, green: 0.18, blue: 0.22, alpha: 1).cgColor
+            layer.fillColor = UIColor.clear.cgColor
+            layer.lineWidth = 4
+            layer.lineCap = .round
+            layer.lineJoin = .round
+            layer.shadowColor = UIColor.red.cgColor
+            layer.shadowRadius = 6
+            layer.shadowOpacity = 0.9
+            layer.shadowOffset = .zero
+            laserView.layer.addSublayer(layer)
+            laserLayer = layer
+        case .changed:
+            laserPath.addLine(to: p)
+            laserLayer?.path = laserPath.cgPath
+        default:
+            guard let layer = laserLayer else { return }
+            laserLayer = nil
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1
+            fade.toValue = 0
+            fade.beginTime = CACurrentMediaTime() + 0.5
+            fade.duration = 0.6
+            fade.fillMode = .forwards
+            fade.isRemovedOnCompletion = false
+            layer.add(fade, forKey: "fade")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { layer.removeFromSuperlayer() }
+        }
     }
 
     private func updateStrokeCount() {
@@ -366,8 +504,13 @@ final class NotebookCanvasController: UIViewController, PKCanvasViewDelegate, UI
         canvas.drawingPolicy = (prefs.fingerDraws || AppEnv.isUITest) ? .anyInput : .pencilOnly
         canvas.tool = settings.pkTool
         let itemsMode = settings.tool.editsItems
-        canvas.drawingGestureRecognizer.isEnabled = !itemsMode
+        canvas.drawingGestureRecognizer.isEnabled = settings.tool.drawsInk
         itemTap.isEnabled = itemsMode
+        laserPan.isEnabled = settings.tool == .laser
+        let fingers = prefs.fingerDraws || AppEnv.isUITest
+        laserPan.allowedTouchTypes = fingers
+            ? [NSNumber(value: UITouch.TouchType.direct.rawValue), NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+            : [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
         if !itemsMode {
             endTextEditing()
             selection = nil
@@ -885,6 +1028,7 @@ final class NotebookCanvasController: UIViewController, PKCanvasViewDelegate, UI
         var firstPageChanged = thumbNeeded
         thumbNeeded = false
         var drawings: [PKDrawing] = []
+        var changedInk = Set<UUID>()
         if dirty {
             dirty = false
             drawings = pageDrawings()
@@ -895,6 +1039,7 @@ final class NotebookCanvasController: UIViewController, PKCanvasViewDelegate, UI
                 do {
                     try document.writeInk(data, for: id)
                     savedInk[id] = data
+                    changedInk.insert(id)
                     if i == 0 { firstPageChanged = true }
                 } catch {
                     state.errorMessage = "Could not save the ink on page \(i + 1): \(error.localizedDescription)"
@@ -907,5 +1052,28 @@ final class NotebookCanvasController: UIViewController, PKCanvasViewDelegate, UI
         }
         document.meta.lastPage = currentPageIndex
         try? document.saveMeta()
+        indexForSearch(changedInk: changedInk, full: false)
+    }
+
+    /// Hands page text and changed handwriting to the background indexer.
+    private func indexForSearch(changedInk: Set<UUID>, full: Bool) {
+        let drawings = pageDrawings()
+        var pages: [PageSnapshot] = []
+        for (i, page) in document.meta.pages.enumerated() {
+            let ink: PKDrawing? = (full || changedInk.contains(page.id)) ? (drawings[safe: i] ?? PKDrawing()) : nil
+            pages.append(PageSnapshot(id: page.id, size: document.pageSize(at: i),
+                                      pdfText: full ? (document.pdf.page(at: i)?.string ?? "") : nil,
+                                      ink: ink, itemsText: SearchIndex.itemsText(page.items)))
+        }
+        let url = document.url
+        let order = document.meta.pages.map(\.id)
+        Task.detached(priority: .utility) {
+            await SearchIndexer.shared.update(notebook: url, pageOrder: order, pages: pages)
+        }
+    }
+
+    /// Called once the editor is up: builds the index if this notebook has none yet.
+    func indexIfNeeded() {
+        if SearchIndex.load(document.url) == nil { indexForSearch(changedInk: [], full: true) }
     }
 }

@@ -66,6 +66,12 @@ final class NotebookStore {
             }
     }
 
+    /// Every notebook in the library, with its folder path for display.
+    func allNotebooks(in folder: URL? = nil) -> [LibraryEntry] {
+        let here = entries(in: folder ?? root)
+        return here.filter(\.isNotebook) + here.filter { !$0.isNotebook }.flatMap { allNotebooks(in: $0.url) }
+    }
+
     func allFolders() -> [URL] {
         func walk(_ nodes: [FolderNode]) -> [URL] {
             nodes.flatMap { [$0.url] + walk($0.children ?? []) }

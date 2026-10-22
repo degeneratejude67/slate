@@ -19,6 +19,11 @@ struct EditorNavBar: View {
             }
             .accessibilityIdentifier("pages-button")
 
+            Button { state.controller?.toggleBookmark() } label: {
+                Image(systemName: state.isBookmarked ? "bookmark.fill" : "bookmark")
+            }
+            .accessibilityIdentifier("bookmark-button")
+
             Spacer(minLength: 12)
             Text(title)
                 .font(.headline)
@@ -35,8 +40,14 @@ struct EditorNavBar: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("item-count")
             }
+            RecordControl(audio: state.audio)
             insertMenu
             addPageMenu
+            Button { state.showReferencePicker = true } label: {
+                Image(systemName: state.referenceURL == nil ? "rectangle.split.2x1" : "rectangle.split.2x1.fill")
+            }
+            .accessibilityIdentifier("split-button")
+            shareMenu
             moreMenu
         }
         .font(.system(size: 17))
@@ -74,6 +85,23 @@ struct EditorNavBar: View {
         .accessibilityIdentifier("add-page-menu")
     }
 
+    private var shareMenu: some View {
+        Menu {
+            Button {
+                if let url = state.controller?.exportPDF(currentPageOnly: false) { state.shareItem = ShareItem(url: url) }
+            } label: { Label("Export as PDF", systemImage: "doc.richtext") }
+            Button {
+                if let url = state.controller?.exportPDF(currentPageOnly: true) { state.shareItem = ShareItem(url: url) }
+            } label: { Label("Export This Page", systemImage: "doc") }
+            Button {
+                if let url = state.controller?.exportBackup() { state.shareItem = ShareItem(url: url) }
+            } label: { Label("Back Up Notebook (.zip)", systemImage: "archivebox") }
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+        }
+        .accessibilityIdentifier("share-menu")
+    }
+
     private var moreMenu: some View {
         Menu {
             Toggle(isOn: Binding(get: { AppSettings.shared.prefs.fingerDraws },
@@ -88,6 +116,76 @@ struct EditorNavBar: View {
             Image(systemName: "ellipsis.circle")
         }
         .accessibilityIdentifier("more-menu")
+    }
+}
+
+/// Microphone button: start or stop a lecture recording, or play an earlier one.
+struct RecordControl: View {
+    @ObservedObject var audio: AudioController
+
+    var body: some View {
+        if audio.isRecording {
+            Button { audio.stopRecording() } label: {
+                HStack(spacing: 6) {
+                    Circle().fill(Color.red).frame(width: 9, height: 9)
+                    Text(Recording.clock(audio.elapsed))
+                        .font(.footnote.monospacedDigit().weight(.semibold))
+                    Image(systemName: "stop.fill").font(.caption)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.red.opacity(0.12)))
+                .foregroundStyle(.red)
+            }
+            .accessibilityIdentifier("stop-recording")
+        } else {
+            Menu {
+                Button { audio.startRecording() } label: { Label("Record Audio", systemImage: "record.circle") }
+                if !audio.recordings.isEmpty {
+                    Section("Recordings") {
+                        ForEach(audio.recordings) { recording in
+                            Button { audio.play(recording) } label: { Label(recording.title, systemImage: "play.circle") }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: audio.recordings.isEmpty ? "mic" : "waveform")
+            }
+            .accessibilityIdentifier("record-menu")
+        }
+    }
+}
+
+/// Playback bar shown while a recording is open.
+struct PlayerBar: View {
+    @ObservedObject var audio: AudioController
+
+    var body: some View {
+        if let recording = audio.current {
+            VStack(spacing: 6) {
+                HStack(spacing: 14) {
+                    Button { audio.togglePlay() } label: {
+                        Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill").font(.title3)
+                    }
+                    Text(Recording.clock(audio.position)).font(.caption.monospacedDigit())
+                    Slider(value: Binding(get: { audio.position }, set: { audio.seek(to: $0) }),
+                           in: 0...max(audio.duration, 1))
+                    Text(Recording.clock(audio.duration)).font(.caption.monospacedDigit())
+                    Button { audio.stopPlayback() } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                }
+                Text("Tap your writing with a finger to hear what was said then · \(recording.started.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .frame(maxWidth: 560)
+            .padding(.bottom, 56)
+            .padding(.horizontal, 16)
+        }
     }
 }
 
@@ -106,7 +204,7 @@ struct EditorToolRow: View {
             Spacer(minLength: 6)
 
             penButton
-            ForEach([ToolKind.pencil, .highlighter, .shape, .eraser, .lasso, .text, .select]) { kind in
+            ForEach([ToolKind.pencil, .highlighter, .shape, .eraser, .lasso, .text, .select, .laser]) { kind in
                 toolButton(kind)
             }
 
@@ -176,6 +274,10 @@ struct EditorToolRow: View {
             .frame(width: 230)
         case .lasso:
             Text("Circle ink to move, resize or recolour it.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        case .laser:
+            Text("Point with the Pencil; the trail fades by itself.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         case .select:

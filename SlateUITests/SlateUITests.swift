@@ -155,6 +155,48 @@ final class SlateUITests: XCTestCase {
         shot("28-shape-line")
     }
 
+    func testSearchTabsSideViewBookmarkLaserExport() {
+        let app = launch(["-uitest-reset", "-uitest-seed-pdf", "-uitest-seed-two", "-uitest-search"])
+        let hit = app.descendants(matching: .any).matching(identifier: "search-hit").firstMatch
+        XCTAssertTrue(hit.waitForExistence(timeout: 30), "no search result for Pelton")
+        sleep(1)
+        shot("40-search-results")
+        tapCentre(hit)
+
+        let surface = canvas(app)
+        sleep(1)
+        app.buttons["bookmark-button"].tap()
+        sleep(1)
+        shot("41-bookmarked")
+
+        app.buttons["tool-laser"].tap()
+        draw(surface, [(0.2, 0.3, 0.6, 0.35)])
+        shot("42-laser")
+        waitForStrokes(app, 0)
+
+        tapCentre(app.buttons["split-button"])
+        let reference = app.descendants(matching: .any).matching(identifier: "reference-Past Paper").firstMatch
+        XCTAssertTrue(reference.waitForExistence(timeout: 5))
+        tapCentre(reference)
+        sleep(2)
+        shot("43-side-view")
+        tapCentre(app.buttons["close-reference"])
+
+        app.buttons["close-notebook"].tap()
+        let second = app.descendants(matching: .any).matching(identifier: "search-hit").element(boundBy: 1)
+        XCTAssertTrue(second.waitForExistence(timeout: 10))
+        tapCentre(second)
+        _ = canvas(app)
+        sleep(1)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "tab-Sample Lecture").firstMatch.exists)
+        shot("44-two-tabs")
+
+        tapCentre(app.buttons["share-menu"])
+        tapCentre(app.buttons["Export as PDF"])
+        sleep(3)
+        shot("45-share-sheet")
+    }
+
     func testSettingsDarkAndHorizontalBottomToolbar() {
         var app = launch(["-uitest-reset", "-uitest-settings", "-uitest-dark"])
         XCTAssertTrue(app.descendants(matching: .any)["scroll-picker"].waitForExistence(timeout: 10))

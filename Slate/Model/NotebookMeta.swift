@@ -87,6 +87,7 @@ struct NotebookMeta: Codable, Equatable {
     var bookmarks: [UUID]
     var lastPage: Int
     var source: String?
+    var recordings: [Recording]
 
     init(title: String, cover: CoverStyle, pages: [PageMeta], source: String? = nil) {
         let now = Date()
@@ -100,6 +101,7 @@ struct NotebookMeta: Codable, Equatable {
         bookmarks = []
         lastPage = 0
         self.source = source
+        recordings = []
     }
 
     init(from decoder: Decoder) throws {
@@ -114,6 +116,7 @@ struct NotebookMeta: Codable, Equatable {
         bookmarks = try c.decodeIfPresent([UUID].self, forKey: .bookmarks) ?? []
         lastPage = try c.decodeIfPresent(Int.self, forKey: .lastPage) ?? 0
         source = try c.decodeIfPresent(String.self, forKey: .source)
+        recordings = (try? c.decodeIfPresent([Recording].self, forKey: .recordings)) ?? []
     }
 }
 

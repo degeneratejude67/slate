@@ -3,6 +3,7 @@ import SwiftUI
 enum SidebarItem: Hashable {
     case documents
     case folder(URL)
+    case search
     case marketplace
     case settings
 }
@@ -17,6 +18,7 @@ struct LibraryView: View {
     private static var initialSelection: SidebarItem {
         if AppEnv.arguments.contains("-uitest-marketplace") { return .marketplace }
         if AppEnv.arguments.contains("-uitest-settings") { return .settings }
+        if AppEnv.arguments.contains("-uitest-search") { return .search }
         return .documents
     }
 
@@ -28,11 +30,12 @@ struct LibraryView: View {
                 detail
             }
         }
-        .fullScreenCover(item: $lib.openNotebook, onDismiss: { lib.refresh() }) { item in
-            NotebookEditorView(url: item.url)
+        .fullScreenCover(isPresented: $lib.editorShown, onDismiss: { lib.refresh() }) {
+            EditorContainer()
+                .environmentObject(lib)
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active && lib.openNotebook == nil { lib.rescan() }
+            if phase == .active && !lib.editorShown { lib.rescan() }
         }
         .alert("Slate", isPresented: Binding(get: { lib.errorMessage != nil },
                                              set: { if !$0 { lib.errorMessage = nil } })) {
@@ -50,6 +53,8 @@ struct LibraryView: View {
         case .folder(let url):
             FolderView(folder: url, selection: $selection)
                 .id(url)
+        case .search:
+            SearchView()
         case .marketplace:
             MarketplaceView()
         case .settings:
@@ -67,6 +72,8 @@ struct SidebarView: View {
         List(selection: $selection) {
             Label("Documents", systemImage: "doc.on.doc")
                 .tag(SidebarItem.documents)
+            Label("Search", systemImage: "magnifyingglass")
+                .tag(SidebarItem.search)
             Section("Subjects") {
                 OutlineGroup(lib.store.folderTree(), children: \.children) { node in
                     Label(node.name, systemImage: "folder")

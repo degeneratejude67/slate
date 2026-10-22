@@ -2,7 +2,7 @@ import SwiftUI
 import PencilKit
 
 enum ToolKind: String, CaseIterable, Identifiable, Codable {
-    case pen, pencil, highlighter, shape, eraser, lasso, text, select
+    case pen, pencil, highlighter, shape, eraser, lasso, text, select, laser
 
     var id: String { rawValue }
 
@@ -16,6 +16,7 @@ enum ToolKind: String, CaseIterable, Identifiable, Codable {
         case .lasso: return "lasso"
         case .text: return "textformat"
         case .select: return "hand.point.up.left"
+        case .laser: return "cursorarrow.rays"
         }
     }
 
@@ -29,6 +30,7 @@ enum ToolKind: String, CaseIterable, Identifiable, Codable {
         case .lasso: return "Lasso"
         case .text: return "Text"
         case .select: return "Select"
+        case .laser: return "Laser Pointer"
         }
     }
 
@@ -36,6 +38,8 @@ enum ToolKind: String, CaseIterable, Identifiable, Codable {
     var usesWidth: Bool { [.pen, .pencil, .highlighter, .shape].contains(self) }
     /// Tools that work on text boxes, pictures and stickers instead of ink.
     var editsItems: Bool { self == .text || self == .select }
+    /// Tools PencilKit handles itself.
+    var drawsInk: Bool { [.pen, .pencil, .highlighter, .shape, .eraser, .lasso].contains(self) }
 }
 
 enum PenStyle: String, CaseIterable, Identifiable, Codable {
@@ -133,10 +137,19 @@ struct ToolSettings: Codable, Equatable {
                                 width: Self.highlightWidths[safe: highlightWidthIndex] ?? 16)
         case .eraser:
             return PKEraserTool(eraserMode == .stroke ? .vector : .bitmap)
-        case .lasso, .text, .select:
+        case .lasso:
             return PKLassoTool()
+        case .text, .select, .laser:
+            // PencilKit's drawing is switched off for these; an inking tool keeps the lasso's
+            // own tap handling from swallowing taps meant for text boxes.
+            return PKInkingTool(.monoline, color: .black, width: 1)
         }
     }
+}
+
+struct ShareItem: Identifiable {
+    let url: URL
+    var id: URL { url }
 }
 
 final class EditorState: ObservableObject {
@@ -152,8 +165,13 @@ final class EditorState: ObservableObject {
     @Published var errorMessage: String?
     /// Kind of the item under the selection box, if any.
     @Published var selectedKind: PageItem.Kind?
+    @Published var isBookmarked = false
+    @Published var shareItem: ShareItem?
+    @Published var referenceURL: URL?
+    @Published var showReferencePicker = false
 
     weak var controller: NotebookCanvasController?
+    let audio = AudioController()
 
     private static let key = "toolSettings.v2"
 

@@ -76,7 +76,7 @@ enum StickerCatalog {
         ]),
         StickerPack(id: "engineering", name: "Engineering", blurb: "Gears, flows and gauges for mechanical notes.", stickers: [
             symbol("gearshape.fill", ink), symbol("gearshape.2.fill", ink), symbol("bolt.fill", amber), symbol("wind", teal),
-            symbol("drop.fill", blue), symbol("fanblades.fill", teal), symbol("flame.fill", red), symbol("speedometer", ink),
+            symbol("drop.fill", blue), symbol("fanblades.fill", teal), symbol("flame", red), symbol("speedometer", ink),
             symbol("ruler.fill", amber), symbol("wrench.and.screwdriver.fill", ink), symbol("hammer.fill", ink),
             symbol("cube.fill", purple), symbol("function", ink), symbol("waveform.path", blue), symbol("atom", purple),
             symbol("thermometer", red),
