@@ -175,7 +175,8 @@ final class SlateUITests: XCTestCase {
         waitForStrokes(app, 0)
 
         tapCentre(app.buttons["split-button"])
-        let reference = app.descendants(matching: .any).matching(identifier: "reference-Past Paper").firstMatch
+        let reference = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'reference-'")).firstMatch
         XCTAssertTrue(reference.waitForExistence(timeout: 5))
         tapCentre(reference)
         sleep(2)
