@@ -7,7 +7,7 @@ param(
     [string]$Udid = "00008030-0002342C2262202E",
     [int]$Tries = 3
 )
-$plume = "D:\ipad\signer\plumesign-2.6.5\plumesign.exe"
+$plume = "D:\ipad\signer\plumesign-2.7.1\plumesign.exe"
 
 if (-not $Ipa) {
     $Ipa = Get-ChildItem (Join-Path $PSScriptRoot "..\out") -Recurse -Filter Slate.ipa -ErrorAction SilentlyContinue |
