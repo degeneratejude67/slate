@@ -142,6 +142,17 @@ final class SlateTests: XCTestCase {
         XCTAssertTrue(store.folderTree().isEmpty)
     }
 
+    func testLoosePDFsBecomeNotebooks() throws {
+        let store = NotebookStore(root: tmp)
+        let course = try store.createFolder(named: "ME 421", in: tmp)
+        try SamplePDF.make().write(to: course.appendingPathComponent("Pelton.pdf"))
+        try Data("not a pdf".utf8).write(to: course.appendingPathComponent("Broken.pdf"))
+        XCTAssertEqual(store.adoptLoosePDFs(), 1)
+        XCTAssertEqual(store.entries(in: course).map(\.name), ["Pelton"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: course.appendingPathComponent("Pelton.pdf").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: course.appendingPathComponent("Broken.pdf").path))
+    }
+
     func testThumbnailHasPageAspect() throws {
         let doc = try XCTUnwrap(PDFDocument(data: SamplePDF.make()))
         let image = Thumbnailer.image(page: doc.page(at: 0), pageSize: slide,

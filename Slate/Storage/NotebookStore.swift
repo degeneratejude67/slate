@@ -126,6 +126,27 @@ final class NotebookStore {
         return url
     }
 
+    /// PDFs put into the library from the Files app or over USB become notebooks in the
+    /// folder they were dropped in. A PDF that can't be read yet (still copying) is left
+    /// for the next pass.
+    @discardableResult
+    func adoptLoosePDFs(in folder: URL? = nil) -> Int {
+        let dir = folder ?? root
+        guard let urls = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.isDirectoryKey],
+                                                     options: [.skipsHiddenFiles]) else { return 0 }
+        var adopted = 0
+        for url in urls {
+            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDirectory {
+                if url.pathExtension != Self.ext { adopted += adoptLoosePDFs(in: url) }
+            } else if url.pathExtension.lowercased() == "pdf", (try? importPDF(from: url, in: dir)) != nil {
+                try? fm.removeItem(at: url)
+                adopted += 1
+            }
+        }
+        return adopted
+    }
+
     // MARK: Changing
 
     @discardableResult

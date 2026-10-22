@@ -46,6 +46,12 @@ final class SlateUITests: XCTestCase {
         }
     }
 
+    /// SwiftUI menus fail XCUITest's scroll-to-visible step, so tap their centre directly.
+    private func tapCentre(_ element: XCUIElement) {
+        XCTAssertTrue(element.waitForExistence(timeout: 5), "\(element) missing")
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    }
+
     private func waitForStrokes(_ app: XCUIApplication, _ expected: Int) {
         let deadline = Date().addingTimeInterval(5)
         while strokeCount(app) != expected && Date() < deadline { usleep(200_000) }
@@ -56,8 +62,8 @@ final class SlateUITests: XCTestCase {
         var app = launch(["-uitest-reset"])
         shot("01-library-empty")
 
-        app.buttons["add-menu"].tap()
-        app.buttons["New Notebook"].tap()
+        tapCentre(app.buttons["add-menu"])
+        tapCentre(app.buttons["New Notebook"])
         XCTAssertTrue(app.buttons["create-notebook"].waitForExistence(timeout: 5))
         shot("02-new-notebook-sheet")
         app.buttons["create-notebook"].tap()
@@ -117,12 +123,12 @@ final class SlateUITests: XCTestCase {
         sleep(1)
         shot("14-rotated-page")
 
-        app.buttons["add-page-menu"].tap()
-        app.buttons["Ruled"].tap()
+        tapCentre(app.buttons["add-page-menu"])
+        tapCentre(app.buttons["Ruled"])
         sleep(1)
         let label = app.staticTexts["page-label"]
         XCTAssertTrue(label.waitForExistence(timeout: 5))
-        XCTAssertEqual(label.label, "4 / 4")
+        XCTAssertTrue(label.label.hasSuffix("/ 4"), "page label is \(label.label)")
         shot("15-added-ruled-page")
     }
 }

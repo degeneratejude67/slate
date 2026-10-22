@@ -3,6 +3,7 @@ import SwiftUI
 /// Notability-style subject sidebar on the left, GoodNotes-style cover grid on the right.
 struct LibraryView: View {
     @EnvironmentObject private var lib: LibraryModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selection: URL?
 
     var body: some View {
@@ -16,6 +17,9 @@ struct LibraryView: View {
         }
         .fullScreenCover(item: $lib.openNotebook, onDismiss: { lib.refresh() }) { item in
             NotebookEditorView(url: item.url)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active && lib.openNotebook == nil { lib.rescan() }
         }
         .alert("Slate", isPresented: Binding(get: { lib.errorMessage != nil },
                                              set: { if !$0 { lib.errorMessage = nil } })) {

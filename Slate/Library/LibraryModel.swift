@@ -29,9 +29,16 @@ final class LibraryModel: ObservableObject {
         if AppEnv.isUITest && AppEnv.arguments.contains("-uitest-seed-pdf") {
             seedSampleLecture()
         }
+        store.adoptLoosePDFs()
     }
 
     func refresh() { revision += 1 }
+
+    /// Called when the app comes to the front: picks up PDFs added from Files or the PC.
+    func rescan() {
+        store.adoptLoosePDFs()
+        refresh()
+    }
 
     func perform(_ work: () throws -> Void) {
         do {
