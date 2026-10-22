@@ -23,6 +23,7 @@ struct NotebookPaths {
     var pdf: URL { root.appendingPathComponent("document.pdf") }
     var inkDir: URL { root.appendingPathComponent("ink", isDirectory: true) }
     var thumb: URL { root.appendingPathComponent("thumb.png") }
+    var imagesDir: URL { root.appendingPathComponent("images", isDirectory: true) }
 
     func ink(_ id: UUID) -> URL { inkDir.appendingPathComponent(id.uuidString + ".drawing") }
 }
@@ -77,6 +78,47 @@ final class NotebookDocument {
         try JSONEncoder.slate.encode(meta).write(to: paths.meta, options: .atomic)
     }
 
+    // MARK: Pictures
+
+    private var imageCache: [String: UIImage] = [:]
+
+    /// Saves a picture into the notebook (longest side at most 2400 px) and returns its file name.
+    func saveImage(_ image: UIImage) throws -> String {
+        try FileManager.default.createDirectory(at: paths.imagesDir, withIntermediateDirectories: true)
+        let maxSide: CGFloat = 2400
+        let pixels = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+        let factor = min(1, maxSide / max(pixels.width, pixels.height))
+        let target = CGSize(width: (pixels.width * factor).rounded(), height: (pixels.height * factor).rounded())
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let resized = UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
+        let name = UUID().uuidString + ".png"
+        guard let data = resized.pngData() else { throw SlateError.writeFailed("the picture") }
+        try data.write(to: paths.imagesDir.appendingPathComponent(name), options: .atomic)
+        imageCache[name] = resized
+        return name
+    }
+
+    func image(named name: String) -> UIImage? {
+        if let hit = imageCache[name] { return hit }
+        let image = UIImage(contentsOfFile: paths.imagesDir.appendingPathComponent(name).path)
+        imageCache[name] = image
+        return image
+    }
+
+    // MARK: Items
+
+    func items(onPage index: Int) -> [PageItem] {
+        meta.pages[safe: index]?.items ?? []
+    }
+
+    func setItems(_ items: [PageItem], onPage index: Int) {
+        guard meta.pages.indices.contains(index) else { return }
+        meta.pages[index].items = items
+    }
+
     @discardableResult
     func insertTemplatePage(paper: Paper, size: CGSize, at index: Int) throws -> UUID {
         guard let template = PDFDocument(data: TemplateRenderer.pdfData(paper: paper, size: size)),
@@ -125,7 +167,8 @@ final class NotebookDocument {
     func writeThumbnail(firstPageInk: PKDrawing) {
         guard meta.pages.first?.paper == nil, let first = pdf.page(at: 0) else { return }
         let image = Thumbnailer.image(page: first, pageSize: PageGeometry.displaySize(first),
-                                      drawing: firstPageInk, width: 360)
+                                      drawing: firstPageInk, width: 360, items: items(onPage: 0),
+                                      imageLoader: { [weak self] in self?.image(named: $0) })
         try? image.pngData()?.write(to: paths.thumb, options: .atomic)
     }
 }

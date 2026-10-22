@@ -3,8 +3,9 @@ import PDFKit
 import PencilKit
 
 enum Thumbnailer {
-    /// A page with its ink, `width` points wide. Safe to call off the main thread.
-    static func image(page: PDFPage?, pageSize: CGSize, drawing: PKDrawing, width: CGFloat) -> UIImage {
+    /// A page with its items and ink, `width` points wide. Safe to call off the main thread.
+    static func image(page: PDFPage?, pageSize: CGSize, drawing: PKDrawing, width: CGFloat,
+                      items: [PageItem] = [], imageLoader: ((String) -> UIImage?)? = nil) -> UIImage {
         let scale = width / max(pageSize.width, 1)
         let size = CGSize(width: width, height: max(1, (pageSize.height * scale).rounded()))
         let format = UIGraphicsImageRendererFormat()
@@ -23,12 +24,45 @@ enum Thumbnailer {
                 c.drawPDFPage(cgPage)
                 c.restoreGState()
             }
+            if !items.isEmpty {
+                c.saveGState()
+                c.scaleBy(x: scale, y: scale)
+                for item in items { ItemRenderer.draw(item, imageLoader: imageLoader) }
+                c.restoreGState()
+            }
             guard !drawing.strokes.isEmpty else { return }
             var ink: UIImage?
             UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
                 ink = drawing.image(from: CGRect(origin: .zero, size: pageSize), scale: scale * 2)
             }
             ink?.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+}
+
+/// Draws a page item into the current UIKit context, in page coordinates.
+enum ItemRenderer {
+    static func draw(_ item: PageItem, imageLoader: ((String) -> UIImage?)?) {
+        switch item.kind {
+        case .text:
+            let style = item.style ?? TextStyle()
+            if let fill = style.fill.rgba {
+                fill.uiColor.setFill()
+                UIBezierPath(roundedRect: item.frame, cornerRadius: 4).fill()
+            }
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: item.uiFont,
+                .foregroundColor: (item.color ?? RGBA(0.11, 0.11, 0.13)).uiColor,
+            ]
+            let inset = item.frame.insetBy(dx: PageItem.textInset, dy: PageItem.textInset)
+            ((item.text ?? "") as NSString).draw(with: inset, options: [.usesLineFragmentOrigin, .usesFontLeading],
+                                                attributes: attrs, context: nil)
+        case .image:
+            if let name = item.image, let image = imageLoader?(name) { image.draw(in: item.frame) }
+        case .sticker:
+            if let id = item.sticker, let sticker = StickerCatalog.sticker(id) {
+                StickerCatalog.image(for: sticker).draw(in: item.frame)
+            }
         }
     }
 }

@@ -2,7 +2,7 @@ import SwiftUI
 import PencilKit
 
 enum ToolKind: String, CaseIterable, Identifiable, Codable {
-    case pen, pencil, highlighter, eraser, lasso
+    case pen, pencil, highlighter, shape, eraser, lasso, text, select
 
     var id: String { rawValue }
 
@@ -11,12 +11,31 @@ enum ToolKind: String, CaseIterable, Identifiable, Codable {
         case .pen: return "pencil.tip"
         case .pencil: return "pencil"
         case .highlighter: return "highlighter"
+        case .shape: return "square.on.circle"
         case .eraser: return "eraser"
         case .lasso: return "lasso"
+        case .text: return "textformat"
+        case .select: return "hand.point.up.left"
         }
     }
 
-    var usesColor: Bool { self == .pen || self == .pencil || self == .highlighter }
+    var label: String {
+        switch self {
+        case .pen: return "Pen"
+        case .pencil: return "Pencil"
+        case .highlighter: return "Highlighter"
+        case .shape: return "Shapes"
+        case .eraser: return "Eraser"
+        case .lasso: return "Lasso"
+        case .text: return "Text"
+        case .select: return "Select"
+        }
+    }
+
+    var usesColor: Bool { [.pen, .pencil, .highlighter, .shape, .text].contains(self) }
+    var usesWidth: Bool { [.pen, .pencil, .highlighter, .shape].contains(self) }
+    /// Tools that work on text boxes, pictures and stickers instead of ink.
+    var editsItems: Bool { self == .text || self == .select }
 }
 
 enum PenStyle: String, CaseIterable, Identifiable, Codable {
@@ -45,27 +64,6 @@ enum EraserMode: String, CaseIterable, Codable {
     case stroke, pixel
 }
 
-struct RGBA: Codable, Equatable, Hashable {
-    var r: Double
-    var g: Double
-    var b: Double
-    var a: Double
-
-    init(_ r: Double, _ g: Double, _ b: Double, _ a: Double = 1) {
-        self.r = r; self.g = g; self.b = b; self.a = a
-    }
-
-    init(_ color: UIColor) {
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        color.getRed(&r, green: &g, blue: &b, alpha: &a)
-        func clamp(_ v: CGFloat) -> Double { Double(min(max(v, 0), 1)) }
-        self.init(clamp(r), clamp(g), clamp(b), clamp(a))
-    }
-
-    var uiColor: UIColor { UIColor(red: r, green: g, blue: b, alpha: a) }
-    var color: Color { Color(uiColor: uiColor) }
-}
-
 /// Pen settings, kept between notebooks like GoodNotes' favourite colours and widths.
 struct ToolSettings: Codable, Equatable {
     static let penWidths: [CGFloat] = [1.6, 2.6, 4.2]
@@ -82,7 +80,7 @@ struct ToolSettings: Codable, Equatable {
     var penWidthIndex = 1
     var pencilWidthIndex = 1
     var highlightWidthIndex = 1
-    var fingerDraws = false
+    var textStyle = TextStyle()
 
     var palette: [RGBA] { tool == .highlighter ? highlightColors : inkColors }
 
@@ -97,6 +95,7 @@ struct ToolSettings: Codable, Equatable {
     }
 
     var currentColor: RGBA { palette[safe: colorIndex] ?? RGBA(0, 0, 0) }
+    var inkColor: RGBA { inkColors[safe: inkColorIndex] ?? RGBA(0, 0, 0) }
 
     mutating func selectColor(_ i: Int) {
         if tool == .highlighter { highlightColorIndex = i } else { inkColorIndex = i }
@@ -123,6 +122,9 @@ struct ToolSettings: Codable, Equatable {
         case .pen:
             return PKInkingTool(penStyle.inkType, color: currentColor.uiColor,
                                 width: Self.penWidths[safe: penWidthIndex] ?? 2.6)
+        case .shape:
+            return PKInkingTool(.monoline, color: currentColor.uiColor,
+                                width: Self.penWidths[safe: penWidthIndex] ?? 2.6)
         case .pencil:
             return PKInkingTool(.pencil, color: currentColor.uiColor,
                                 width: Self.pencilWidths[safe: pencilWidthIndex] ?? 3.2)
@@ -131,7 +133,7 @@ struct ToolSettings: Codable, Equatable {
                                 width: Self.highlightWidths[safe: highlightWidthIndex] ?? 16)
         case .eraser:
             return PKEraserTool(eraserMode == .stroke ? .vector : .bitmap)
-        case .lasso:
+        case .lasso, .text, .select:
             return PKLassoTool()
         }
     }
@@ -141,13 +143,19 @@ final class EditorState: ObservableObject {
     @Published var settings: ToolSettings
     @Published var pageLabel = ""
     @Published var strokeCount = 0
+    @Published var itemCount = 0
     @Published var showPages = false
+    @Published var showStickers = false
+    @Published var showPhotoPicker = false
+    @Published var showImageImporter = false
     @Published var pagesRevision = 0
     @Published var errorMessage: String?
+    /// Kind of the item under the selection box, if any.
+    @Published var selectedKind: PageItem.Kind?
 
     weak var controller: NotebookCanvasController?
 
-    private static let key = "toolSettings.v1"
+    private static let key = "toolSettings.v2"
 
     init() {
         var loaded = ToolSettings()

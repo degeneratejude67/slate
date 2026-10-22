@@ -82,8 +82,15 @@ private struct PageThumbnail: View {
         .task(id: "\(index)-\(drawing.strokes.count)-\(document.meta.pages[safe: index]?.id.uuidString ?? "")") {
             let page = document.pdf.page(at: index)
             let ink = drawing
+            let items = document.items(onPage: index)
+            var pictures: [String: UIImage] = [:]
+            for item in items where item.kind == .image {
+                if let name = item.image { pictures[name] = document.image(named: name) }
+            }
+            let loaded = pictures
             let rendered = await Task.detached(priority: .userInitiated) {
-                Thumbnailer.image(page: page, pageSize: size, drawing: ink, width: 220)
+                Thumbnailer.image(page: page, pageSize: size, drawing: ink, width: 220,
+                                  items: items, imageLoader: { loaded[$0] })
             }.value
             image = rendered
         }

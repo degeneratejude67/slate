@@ -153,6 +153,125 @@ final class SlateTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: course.appendingPathComponent("Broken.pdf").path))
     }
 
+    func testHorizontalLayoutPlacesPagesSideBySide() {
+        let layout = PageLayout(sizes: [a4, slide, a4], axis: .horizontal)
+        XCTAssertEqual(layout.frames[0].midY, layout.frames[2].midY, accuracy: 0.01)
+        XCTAssertEqual(layout.frames[1].minX, layout.frames[0].maxX + PageLayout.gap, accuracy: 0.01)
+        XCTAssertEqual(layout.contentSize.height, a4.height + 2 * PageLayout.margin, accuracy: 0.01)
+        XCTAssertEqual(layout.index(at: CGPoint(x: layout.frames[2].midX, y: 10)), 2)
+        let stroke = InkLayout.translated(stroke(at: CGPoint(x: 30, y: 30)), by: layout.frames[1].origin)
+        XCTAssertEqual(InkLayout.split(PKDrawing(strokes: [stroke]), layout: layout).map { $0.strokes.count }, [0, 1, 0])
+    }
+
+    func testItemsRoundTripAndOldPagesDecode() throws {
+        let text = PageItem(kind: .text, frame: CGRect(x: 10, y: 20, width: 200, height: 40), text: "Bernoulli",
+                            style: TextStyle(font: .serif, size: 22, bold: true, fill: .yellow), color: RGBA(0.1, 0.2, 0.3))
+        let sticker = PageItem(kind: .sticker, frame: CGRect(x: 50, y: 60, width: 64, height: 64), sticker: "sym:star.fill")
+        let page = PageMeta(id: UUID(), paper: Paper(kind: .problem, tone: .cream), items: [text, sticker])
+        let back = try JSONDecoder.slate.decode(PageMeta.self, from: JSONEncoder.slate.encode(page))
+        XCTAssertEqual(back, page)
+
+        let old = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","paper":{"kind":"someFutureKind","tone":"white"}}"#
+        let decoded = try JSONDecoder.slate.decode(PageMeta.self, from: Data(old.utf8))
+        XCTAssertNil(decoded.paper)
+        XCTAssertTrue(decoded.items.isEmpty)
+    }
+
+    func testTextBoxGrowsWithText() {
+        var item = PageItem(kind: .text, frame: CGRect(x: 0, y: 0, width: 160, height: 30), text: "short")
+        let one = item.fittedTextHeight()
+        item.text = String(repeating: "longer words wrap onto more lines ", count: 6)
+        XCTAssertGreaterThan(item.fittedTextHeight(), one * 2)
+    }
+
+    func testPrefsSurviveMissingAndUnknownKeys() throws {
+        let json = #"{"theme":"dark","scroll":"horizontal","defaultCover":"notACover"}"#
+        let prefs = try JSONDecoder().decode(Prefs.self, from: Data(json.utf8))
+        XCTAssertEqual(prefs.theme, .dark)
+        XCTAssertEqual(prefs.scroll, .horizontal)
+        XCTAssertEqual(prefs.defaultCover, .slate)
+        XCTAssertTrue(prefs.autoAddPage)
+    }
+
+    private func ring(_ f: (CGFloat) -> CGPoint, count: Int = 80) -> [CGPoint] {
+        (0..<count).map { f(CGFloat($0) / CGFloat(count)) }
+    }
+
+    func testShapeRecognizer() {
+        // Rough circle with wobble, starting at the right.
+        let circle = ring { t in
+            let a = t * 2 * .pi, r = 100 + 4 * sin(a * 7)
+            return CGPoint(x: 300 + r * cos(a), y: 300 + r * sin(a))
+        }
+        guard case .ellipse(let rect)? = ShapeRecognizer.recognize(circle) else { return XCTFail("circle not found") }
+        XCTAssertEqual(rect.width, rect.height, accuracy: 0.5)
+        XCTAssertEqual(rect.midX, 300, accuracy: 6)
+
+        // Rectangle drawn from the middle of its top edge, with a little shake.
+        var rect4: [CGPoint] = []
+        let corners = [CGPoint(x: 200, y: 100), CGPoint(x: 300, y: 100), CGPoint(x: 300, y: 220),
+                       CGPoint(x: 100, y: 220), CGPoint(x: 100, y: 100), CGPoint(x: 200, y: 100)]
+        for i in 0..<(corners.count - 1) {
+            for k in 0..<20 {
+                let t = CGFloat(k) / 20
+                rect4.append(CGPoint(x: corners[i].x + (corners[i + 1].x - corners[i].x) * t + CGFloat(k % 3) - 1,
+                                     y: corners[i].y + (corners[i + 1].y - corners[i].y) * t + CGFloat(k % 2)))
+            }
+        }
+        guard case .polygon(let quad)? = ShapeRecognizer.recognize(rect4) else { return XCTFail("rectangle not found") }
+        XCTAssertEqual(quad.count, 4)
+
+        let triangle = [CGPoint(x: 0, y: 200), CGPoint(x: 100, y: 20), CGPoint(x: 200, y: 200), CGPoint(x: 0, y: 200)]
+        var tri: [CGPoint] = []
+        for i in 0..<3 {
+            for k in 0..<25 {
+                let t = CGFloat(k) / 25
+                tri.append(CGPoint(x: triangle[i].x + (triangle[i + 1].x - triangle[i].x) * t,
+                                   y: triangle[i].y + (triangle[i + 1].y - triangle[i].y) * t))
+            }
+        }
+        guard case .polygon(let three)? = ShapeRecognizer.recognize(tri) else { return XCTFail("triangle not found") }
+        XCTAssertEqual(three.count, 3)
+
+        let line = (0..<40).map { CGPoint(x: CGFloat($0) * 5, y: 50 + CGFloat($0 % 2)) }
+        guard case .line? = ShapeRecognizer.recognize(line) else { return XCTFail("line not found") }
+
+        let scribble = (0..<60).map { i in CGPoint(x: CGFloat(i) * 4, y: 100 + 40 * sin(CGFloat(i) * 0.5)) }
+        XCTAssertNil(ShapeRecognizer.recognize(scribble))
+
+        let strokes = ShapeRecognizer.strokes(for: .polygon(quad), like: stroke(at: .zero))
+        XCTAssertEqual(strokes.count, 1)
+        XCTAssertGreaterThan(strokes[0].path.count, 8)
+    }
+
+    func testEveryTemplateAndStickerRenders() throws {
+        for kind in PaperKind.allCases {
+            let image = TemplateRenderer.previewImage(Paper(kind: kind, tone: .dark), size: a4, width: 120)
+            XCTAssertEqual(image.size.width, 120, accuracy: 0.5, kind.rawValue)
+        }
+        for pack in StickerCatalog.packs {
+            for sticker in pack.stickers {
+                XCTAssertEqual(StickerCatalog.sticker(sticker.id), sticker)
+                XCTAssertGreaterThan(StickerCatalog.image(for: sticker, width: 80).size.width, 0, sticker.id)
+            }
+        }
+        XCTAssertEqual(Set(StickerCatalog.packs.flatMap { $0.stickers.map(\.id) }).count,
+                       StickerCatalog.packs.reduce(0) { $0 + $1.stickers.count }, "sticker ids must be unique")
+    }
+
+    func testImagesSaveIntoNotebook() throws {
+        let store = NotebookStore(root: tmp)
+        let doc = try NotebookDocument(url: try store.createNotebook(title: "Pics", paper: .ruled, size: a4, pages: 1,
+                                                                     cover: .teal, in: tmp))
+        let big = UIGraphicsImageRenderer(size: CGSize(width: 3000, height: 1500)).image { ctx in
+            UIColor.orange.setFill(); ctx.fill(CGRect(x: 0, y: 0, width: 3000, height: 1500))
+        }
+        let name = try doc.saveImage(big)
+        let reopened = try NotebookDocument(url: doc.url)
+        let loaded = try XCTUnwrap(reopened.image(named: name))
+        XCTAssertLessThanOrEqual(max(loaded.size.width * loaded.scale, loaded.size.height * loaded.scale), 2400.5)
+    }
+
     func testThumbnailHasPageAspect() throws {
         let doc = try XCTUnwrap(PDFDocument(data: SamplePDF.make()))
         let image = Thumbnailer.image(page: doc.page(at: 0), pageSize: slide,

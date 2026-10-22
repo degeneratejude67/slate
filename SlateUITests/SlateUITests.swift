@@ -96,6 +96,83 @@ final class SlateUITests: XCTestCase {
         shot("06-reopened-after-relaunch")
     }
 
+    private func waitForItems(_ app: XCUIApplication, _ expected: Int) {
+        let label = app.staticTexts["item-count"]
+        XCTAssertTrue(label.waitForExistence(timeout: 5))
+        let deadline = Date().addingTimeInterval(5)
+        while label.label != "\(expected)" && Date() < deadline { usleep(200_000) }
+        XCTAssertEqual(label.label, "\(expected)")
+    }
+
+    func testMarketplaceTemplateStickerTextAndShape() {
+        let app = launch(["-uitest-reset", "-uitest-marketplace"])
+        let problem = app.buttons["template-problem"]
+        XCTAssertTrue(problem.waitForExistence(timeout: 10))
+        sleep(1)
+        shot("20-marketplace")
+        app.swipeUp()
+        app.swipeUp()
+        sleep(1)
+        shot("21-marketplace-covers-stickers")
+        app.swipeDown()
+        app.swipeDown()
+
+        tapCentre(problem)
+        XCTAssertTrue(app.buttons["use-template"].waitForExistence(timeout: 5))
+        shot("22-template-detail")
+        app.buttons["use-template"].tap()
+
+        let surface = canvas(app)
+        sleep(1)
+        shot("23-problem-sheet")
+
+        tapCentre(app.buttons["insert-menu"])
+        tapCentre(app.buttons["Sticker"])
+        let sticker = app.buttons["sticker-0-0"]
+        XCTAssertTrue(sticker.waitForExistence(timeout: 5))
+        sleep(1)
+        shot("24-sticker-picker")
+        sticker.tap()
+        waitForItems(app, 1)
+        sleep(1)
+        shot("25-sticker-placed")
+
+        app.buttons["tool-text"].tap()
+        surface.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.55)).tap()
+        let editor = app.textViews["text-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.typeText("Bernoulli: p + rho v^2/2 + rho g z = const")
+        shot("26-typing")
+        app.buttons["tool-select"].tap()
+        waitForItems(app, 2)
+        sleep(1)
+        shot("27-text-box")
+
+        app.buttons["tool-shape"].tap()
+        draw(surface, [(0.20, 0.80, 0.70, 0.81)])
+        waitForStrokes(app, 1)
+        sleep(1)
+        shot("28-shape-line")
+    }
+
+    func testSettingsDarkAndHorizontalBottomToolbar() {
+        var app = launch(["-uitest-reset", "-uitest-settings", "-uitest-dark"])
+        XCTAssertTrue(app.descendants(matching: .any)["scroll-picker"].waitForExistence(timeout: 10))
+        sleep(1)
+        shot("30-settings-dark")
+        app.terminate()
+
+        app = launch(["-uitest-reset", "-uitest-seed-pdf", "-uitest-horizontal", "-uitest-toolbar-bottom"])
+        XCTAssertTrue(app.buttons["notebook-Sample Lecture"].waitForExistence(timeout: 10))
+        app.buttons["notebook-Sample Lecture"].tap()
+        _ = canvas(app)
+        sleep(2)
+        shot("31-horizontal-bottom-toolbar")
+        let label = app.staticTexts["page-label"]
+        XCTAssertTrue(label.waitForExistence(timeout: 5))
+        XCTAssertTrue(label.label.hasPrefix("1 /"), "page label is \(label.label)")
+    }
+
     func testPDFNotebookPagesZoomAndAddPage() {
         let app = launch(["-uitest-reset", "-uitest-seed-pdf"])
         XCTAssertTrue(app.buttons["notebook-Sample Lecture"].waitForExistence(timeout: 10))

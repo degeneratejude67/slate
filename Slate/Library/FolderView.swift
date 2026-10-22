@@ -3,8 +3,9 @@ import UniformTypeIdentifiers
 
 struct FolderView: View {
     @EnvironmentObject private var lib: LibraryModel
+    @ObservedObject private var settings = AppSettings.shared
     let folder: URL
-    @Binding var selection: URL?
+    @Binding var selection: SidebarItem?
 
     @State private var showNewNotebook = false
     @State private var showImporter = false
@@ -17,7 +18,9 @@ struct FolderView: View {
     var body: some View {
         let _ = lib.revision
         let entries = lib.entries(in: folder)
+        let density = settings.prefs.gridDensity
         ScrollView {
+            ExpiryBanner()
             if entries.isEmpty {
                 ContentUnavailableView {
                     Label("Nothing here yet", systemImage: "books.vertical")
@@ -26,11 +29,12 @@ struct FolderView: View {
                 }
                 .padding(.top, 120)
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 190), spacing: 30, alignment: .top)],
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: density.tileWidth, maximum: density.tileWidth * 1.25),
+                                         spacing: 30, alignment: .top)],
                       spacing: 34) {
                 ForEach(entries) { entry in
                     Button { open(entry) } label: {
-                        EntryTile(entry: entry)
+                        EntryTile(entry: entry, coverHeight: density.coverHeight)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier((entry.isNotebook ? "notebook-" : "folder-") + entry.name)
@@ -102,7 +106,7 @@ struct FolderView: View {
                             titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
                 if let target = deleteTarget {
-                    if selection == target.url { selection = nil }
+                    if selection == .folder(target.url) { selection = .documents }
                     lib.perform { try lib.store.delete(target.url) }
                 }
             }
@@ -115,7 +119,7 @@ struct FolderView: View {
         if entry.isNotebook {
             lib.openNotebook = OpenNotebook(url: entry.url)
         } else {
-            selection = entry.url
+            selection = .folder(entry.url)
         }
     }
 

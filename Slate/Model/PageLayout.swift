@@ -13,39 +13,60 @@ enum PageGeometry {
 }
 
 /// Where each page sits in the notebook's one long canvas (unzoomed points).
-/// Pages stack vertically and are centred on the widest page.
+/// Vertical: pages stack top to bottom, centred on the widest page.
+/// Horizontal: pages sit side by side, centred on the tallest page.
 struct PageLayout {
     static let margin: CGFloat = 32
     static let gap: CGFloat = 32
 
+    let axis: ScrollAxis
     let frames: [CGRect]
     let contentSize: CGSize
 
-    init(sizes: [CGSize]) {
-        let maxWidth = sizes.map(\.width).max() ?? PageSizePreset.a4.size.width
-        var y = Self.margin
+    init(sizes: [CGSize], axis: ScrollAxis = .vertical) {
+        self.axis = axis
+        let m = Self.margin
         var frames: [CGRect] = []
-        for size in sizes {
-            frames.append(CGRect(x: Self.margin + (maxWidth - size.width) / 2, y: y,
-                                 width: size.width, height: size.height))
-            y += size.height + Self.gap
+        switch axis {
+        case .vertical:
+            let maxWidth = sizes.map(\.width).max() ?? PageSizePreset.a4.size.width
+            var y = m
+            for size in sizes {
+                frames.append(CGRect(x: m + (maxWidth - size.width) / 2, y: y, width: size.width, height: size.height))
+                y += size.height + Self.gap
+            }
+            contentSize = CGSize(width: maxWidth + 2 * m, height: sizes.isEmpty ? 2 * m : y - Self.gap + m)
+        case .horizontal:
+            let maxHeight = sizes.map(\.height).max() ?? PageSizePreset.a4.size.height
+            var x = m
+            for size in sizes {
+                frames.append(CGRect(x: x, y: m + (maxHeight - size.height) / 2, width: size.width, height: size.height))
+                x += size.width + Self.gap
+            }
+            contentSize = CGSize(width: sizes.isEmpty ? 2 * m : x - Self.gap + m, height: maxHeight + 2 * m)
         }
         self.frames = frames
-        contentSize = CGSize(width: maxWidth + 2 * Self.margin,
-                             height: sizes.isEmpty ? 2 * Self.margin : y - Self.gap + Self.margin)
     }
 
-    /// The page a vertical position belongs to; the gap below a page counts half to each side.
-    func index(atY y: CGFloat) -> Int {
+    /// The page a position along the scroll axis belongs to; the gap after a page counts
+    /// half to each side.
+    func index(along value: CGFloat) -> Int {
         guard !frames.isEmpty else { return 0 }
-        for (i, frame) in frames.enumerated() where y < frame.maxY + Self.gap / 2 {
-            return i
+        for (i, frame) in frames.enumerated() {
+            let end = axis == .vertical ? frame.maxY : frame.maxX
+            if value < end + Self.gap / 2 { return i }
         }
         return frames.count - 1
     }
 
+    func index(atY y: CGFloat) -> Int { index(along: y) }
+
+    func index(at point: CGPoint) -> Int {
+        index(along: axis == .vertical ? point.y : point.x)
+    }
+
     func index(for rect: CGRect) -> Int {
-        index(atY: rect.midY)
+        index(at: CGPoint(x: rect.midX, y: rect.midY))
     }
 }
 

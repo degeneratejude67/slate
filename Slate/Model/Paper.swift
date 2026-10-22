@@ -1,10 +1,78 @@
 import UIKit
 
-enum PaperKind: String, Codable, CaseIterable, Identifiable {
-    case blank, ruled, grid, dotted, cornell
+enum TemplateCategory: String, CaseIterable, Identifiable {
+    case essentials = "Essentials"
+    case study = "Study"
+    case engineering = "Engineering"
+    case planners = "Planners & Lists"
+    case creative = "Creative"
 
     var id: String { rawValue }
-    var label: String { rawValue.capitalized }
+}
+
+enum PaperKind: String, Codable, CaseIterable, Identifiable {
+    case blank, ruled, narrowRuled, grid, smallGrid, dotted
+    case cornell, lecture, problem, twoColumn
+    case engineering, graph, isometric
+    case todo, weekly
+    case music
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .blank: return "Blank"
+        case .ruled: return "Ruled"
+        case .narrowRuled: return "Narrow Ruled"
+        case .grid: return "Grid"
+        case .smallGrid: return "5 mm Grid"
+        case .dotted: return "Dotted"
+        case .cornell: return "Cornell"
+        case .lecture: return "Lecture Notes"
+        case .problem: return "Problem Sheet"
+        case .twoColumn: return "Two Column"
+        case .engineering: return "Engineering Pad"
+        case .graph: return "Graph Paper"
+        case .isometric: return "Isometric"
+        case .todo: return "To-Do List"
+        case .weekly: return "Weekly Planner"
+        case .music: return "Music Staff"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .blank: return "Nothing in the way."
+        case .ruled: return "Wide lines with a margin."
+        case .narrowRuled: return "Closer lines for small handwriting."
+        case .grid: return "6 mm squares."
+        case .smallGrid: return "5 mm squares for sketches and tables."
+        case .dotted: return "Dots that guide without shouting."
+        case .cornell: return "Cue column, notes and a summary box."
+        case .lecture: return "Course, date and topic header over ruled lines."
+        case .problem: return "Given, Find, Diagram and a gridded Solution area."
+        case .twoColumn: return "Two ruled columns, for formulas or comparisons."
+        case .engineering: return "Green engineering paper with a title block."
+        case .graph: return "Millimetre graph paper with 5 and 10 mm lines."
+        case .isometric: return "Triangular dot lattice for 3D sketches."
+        case .todo: return "Checkbox rows with a date line."
+        case .weekly: return "Seven day boxes and a notes box."
+        case .music: return "Five-line staves."
+        }
+    }
+
+    var category: TemplateCategory {
+        switch self {
+        case .blank, .ruled, .narrowRuled, .grid, .smallGrid, .dotted: return .essentials
+        case .cornell, .lecture, .problem, .twoColumn: return .study
+        case .engineering, .graph, .isometric: return .engineering
+        case .todo, .weekly: return .planners
+        case .music: return .creative
+        }
+    }
+
+    /// The short list shown in quick pickers.
+    static let quick: [PaperKind] = [.blank, .ruled, .grid, .dotted, .cornell, .problem, .engineering]
 }
 
 enum PaperTone: String, Codable, CaseIterable, Identifiable {
@@ -29,11 +97,18 @@ enum PaperTone: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// Margin and Cornell divider lines.
+    /// Margin lines, dividers and header labels.
     var accent: UIColor {
         switch self {
         case .dark: return UIColor(red: 0.55, green: 0.30, blue: 0.33, alpha: 1)
         default: return UIColor(red: 0.91, green: 0.58, blue: 0.58, alpha: 1)
+        }
+    }
+
+    var label2: UIColor {
+        switch self {
+        case .dark: return UIColor(white: 0.62, alpha: 1)
+        default: return UIColor(red: 0.45, green: 0.52, blue: 0.60, alpha: 1)
         }
     }
 }
@@ -41,8 +116,12 @@ enum PaperTone: String, Codable, CaseIterable, Identifiable {
 struct Paper: Codable, Equatable, Hashable {
     var kind: PaperKind
     var tone: PaperTone
+    /// Name of an imported template in Documents/Templates; overrides `kind` when set.
+    var custom: String? = nil
 
     static let ruled = Paper(kind: .ruled, tone: .white)
+
+    var label: String { custom ?? kind.label }
 }
 
 enum PageSizePreset: String, Codable, CaseIterable, Identifiable {

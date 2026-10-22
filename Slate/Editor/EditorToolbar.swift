@@ -1,25 +1,13 @@
 import SwiftUI
 
-/// GoodNotes-style two-row bar: navigation and page actions on top, tools in the middle of
-/// the second row with the favourite colours and widths of the selected tool beside them.
-struct EditorToolbar: View {
+/// GoodNotes-style bars: navigation and page actions in one row, tools in the other with
+/// the options of the selected tool beside them.
+struct EditorNavBar: View {
     @ObservedObject var state: EditorState
     let title: String
     let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            topRow
-            Divider().opacity(0.6)
-            toolRow
-            Divider()
-        }
-        .background(.bar)
-    }
-
-    // MARK: Rows
-
-    private var topRow: some View {
         HStack(spacing: 20) {
             Button(action: onClose) {
                 Label("Library", systemImage: "chevron.left")
@@ -42,7 +30,12 @@ struct EditorToolbar: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("stroke-count")
+                Text("\(state.itemCount)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("item-count")
             }
+            insertMenu
             addPageMenu
             moreMenu
         }
@@ -51,8 +44,58 @@ struct EditorToolbar: View {
         .frame(height: 46)
     }
 
-    private var toolRow: some View {
-        HStack(spacing: 4) {
+    private var insertMenu: some View {
+        Menu {
+            Button { state.settings.tool = .text } label: { Label("Text Box", systemImage: "textformat") }
+            Button { state.showPhotoPicker = true } label: { Label("Photo", systemImage: "photo") }
+            Button { state.showImageImporter = true } label: { Label("Image from Files", systemImage: "folder") }
+            Button { state.showStickers = true } label: { Label("Sticker", systemImage: "face.smiling") }
+        } label: {
+            Image(systemName: "plus.circle")
+        }
+        .accessibilityIdentifier("insert-menu")
+    }
+
+    private var addPageMenu: some View {
+        Menu {
+            Button { state.controller?.insertPage(paper: nil) } label: {
+                Label("Same as This Page", systemImage: "doc.on.doc")
+            }
+            Section("New Page After This One") {
+                ForEach(PaperKind.quick) { kind in
+                    Button(kind.label) {
+                        state.controller?.insertPage(paper: Paper(kind: kind, tone: AppSettings.shared.prefs.defaultPaper.tone))
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "doc.badge.plus")
+        }
+        .accessibilityIdentifier("add-page-menu")
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Toggle(isOn: Binding(get: { AppSettings.shared.prefs.fingerDraws },
+                                 set: { AppSettings.shared.prefs.fingerDraws = $0 })) {
+                Label("Draw with Finger", systemImage: "hand.draw")
+            }
+            Picker("Scrolling", selection: Binding(get: { AppSettings.shared.prefs.scroll },
+                                                   set: { AppSettings.shared.prefs.scroll = $0 })) {
+                ForEach(ScrollAxis.allCases) { Text("Scroll " + $0.label).tag($0) }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityIdentifier("more-menu")
+    }
+}
+
+struct EditorToolRow: View {
+    @ObservedObject var state: EditorState
+
+    var body: some View {
+        HStack(spacing: 2) {
             Button { state.controller?.undo() } label: { plainIcon("arrow.uturn.backward") }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("undo")
@@ -60,31 +103,31 @@ struct EditorToolbar: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("redo")
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
 
             penButton
-            toolButton(.pencil)
-            toolButton(.highlighter)
-            toolButton(.eraser)
-            toolButton(.lasso)
+            ForEach([ToolKind.pencil, .highlighter, .shape, .eraser, .lasso, .text, .select]) { kind in
+                toolButton(kind)
+            }
 
-            Divider().frame(height: 26).padding(.horizontal, 10)
+            Divider().frame(height: 26).padding(.horizontal, 8)
 
-            styleControls
+            options
+                .frame(minWidth: 230, alignment: .leading)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .frame(height: 50)
     }
 
-    // MARK: Tools
+    // MARK: Tool buttons
 
     private func toolIcon(_ kind: ToolKind) -> some View {
         let selected = state.settings.tool == kind
         return Image(systemName: kind.symbol)
-            .font(.system(size: 19))
-            .frame(width: 42, height: 36)
+            .font(.system(size: 18))
+            .frame(width: 40, height: 36)
             .foregroundStyle(selected ? Theme.accent : Color.primary)
             .background(RoundedRectangle(cornerRadius: 9).fill(selected ? Theme.accent.opacity(0.15) : Color.clear))
             .contentShape(Rectangle())
@@ -92,8 +135,8 @@ struct EditorToolbar: View {
 
     private func plainIcon(_ symbol: String) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 18))
-            .frame(width: 40, height: 36)
+            .font(.system(size: 17))
+            .frame(width: 38, height: 36)
             .contentShape(Rectangle())
     }
 
@@ -101,6 +144,7 @@ struct EditorToolbar: View {
         Button { state.settings.tool = kind } label: { toolIcon(kind) }
             .buttonStyle(.plain)
             .accessibilityIdentifier("tool-\(kind.rawValue)")
+            .accessibilityLabel(kind.label)
     }
 
     /// Tap picks the pen; press and hold picks the pen type.
@@ -119,10 +163,54 @@ struct EditorToolbar: View {
         .accessibilityIdentifier("tool-pen")
     }
 
-    @ViewBuilder private var styleControls: some View {
+    // MARK: Options of the current tool
+
+    @ViewBuilder private var options: some View {
+        switch state.settings.tool {
+        case .eraser:
+            Picker("Eraser", selection: $state.settings.eraserMode) {
+                Text("Whole Strokes").tag(EraserMode.stroke)
+                Text("Precise").tag(EraserMode.pixel)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 230)
+        case .lasso:
+            Text("Circle ink to move, resize or recolour it.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        case .select:
+            if state.selectedKind != nil {
+                HStack(spacing: 14) {
+                    Text("Drag to move, corner to resize.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button(role: .destructive) { state.controller?.deleteSelected() } label: {
+                        Image(systemName: "trash")
+                    }
+                    .accessibilityIdentifier("delete-item")
+                }
+            } else {
+                Text("Tap a text box, picture or sticker.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        case .text:
+            HStack(spacing: 6) {
+                textControls
+                swatches
+            }
+        default:
+            HStack(spacing: 6) {
+                swatches
+                Divider().frame(height: 22).padding(.horizontal, 4)
+                widths
+            }
+        }
+    }
+
+    private var swatches: some View {
         let settings = state.settings
-        let enabled = settings.tool.usesColor
-        HStack(spacing: 6) {
+        return HStack(spacing: 4) {
             ForEach(0..<3, id: \.self) { i in
                 Button { state.settings.selectColor(i) } label: {
                     Circle()
@@ -130,8 +218,7 @@ struct EditorToolbar: View {
                         .frame(width: 22, height: 22)
                         .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
                         .padding(3)
-                        .overlay(Circle().strokeBorder(settings.colorIndex == i && enabled ? Theme.accent : .clear,
-                                                       lineWidth: 2))
+                        .overlay(Circle().strokeBorder(settings.colorIndex == i ? Theme.accent : .clear, lineWidth: 2))
                         .frame(width: 32, height: 36)
                 }
                 .buttonStyle(.plain)
@@ -140,13 +227,16 @@ struct EditorToolbar: View {
             ColorPicker("Colour", selection: colorBinding, supportsOpacity: false)
                 .labelsHidden()
                 .frame(width: 32)
+        }
+    }
 
-            Divider().frame(height: 22).padding(.horizontal, 6)
-
+    private var widths: some View {
+        let settings = state.settings
+        return HStack(spacing: 0) {
             ForEach(0..<3, id: \.self) { i in
                 Button { state.settings.selectWidth(i) } label: {
                     Circle()
-                        .fill(settings.widthIndex == i && enabled ? Theme.accent : Color.primary.opacity(0.55))
+                        .fill(settings.widthIndex == i ? Theme.accent : Color.primary.opacity(0.55))
                         .frame(width: CGFloat(5 + i * 4), height: CGFloat(5 + i * 4))
                         .frame(width: 28, height: 36)
                         .contentShape(Rectangle())
@@ -155,8 +245,47 @@ struct EditorToolbar: View {
                 .accessibilityIdentifier("width-\(i)")
             }
         }
-        .opacity(enabled ? 1 : 0.3)
-        .disabled(!enabled)
+    }
+
+    private var textControls: some View {
+        let style = state.settings.textStyle
+        return HStack(spacing: 4) {
+            Menu {
+                Picker("Font", selection: $state.settings.textStyle.font) {
+                    ForEach(ItemFont.allCases) { Text($0.label).tag($0) }
+                }
+            } label: {
+                Text(style.font.label)
+                    .font(.footnote.weight(.medium))
+                    .frame(width: 74, height: 30)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.06)))
+            }
+            Menu {
+                Picker("Size", selection: $state.settings.textStyle.size) {
+                    ForEach(TextStyle.sizes, id: \.self) { Text("\(Int($0)) pt").tag($0) }
+                }
+            } label: {
+                Text("\(Int(style.size))")
+                    .font(.footnote.monospacedDigit().weight(.medium))
+                    .frame(width: 36, height: 30)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.06)))
+            }
+            Button { state.settings.textStyle.bold.toggle() } label: {
+                Image(systemName: "bold")
+                    .frame(width: 30, height: 30)
+                    .foregroundStyle(style.bold ? Theme.accent : Color.primary)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(style.bold ? Theme.accent.opacity(0.15) : Color.clear))
+            }
+            .buttonStyle(.plain)
+            Menu {
+                Picker("Fill", selection: $state.settings.textStyle.fill) {
+                    ForEach(TextFill.allCases) { Text($0.label).tag($0) }
+                }
+            } label: {
+                Image(systemName: style.fill == .none ? "note.text" : "note.text.badge.plus")
+                    .frame(width: 30, height: 30)
+            }
+        }
     }
 
     private var colorBinding: Binding<Color> {
@@ -164,40 +293,5 @@ struct EditorToolbar: View {
             get: { state.settings.currentColor.color },
             set: { state.settings.setCurrentColor(RGBA(UIColor($0))) }
         )
-    }
-
-    // MARK: Menus
-
-    private var addPageMenu: some View {
-        Menu {
-            Button { state.controller?.insertPage(paper: nil) } label: {
-                Label("Same as This Page", systemImage: "doc.on.doc")
-            }
-            Section("New Page After This One") {
-                ForEach(PaperKind.allCases) { kind in
-                    Button(kind.label) {
-                        state.controller?.insertPage(paper: Paper(kind: kind, tone: .white))
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: "doc.badge.plus")
-        }
-        .accessibilityIdentifier("add-page-menu")
-    }
-
-    private var moreMenu: some View {
-        Menu {
-            Toggle(isOn: $state.settings.fingerDraws) {
-                Label("Draw with Finger", systemImage: "hand.draw")
-            }
-            Picker("Eraser", selection: $state.settings.eraserMode) {
-                Text("Eraser: Whole Strokes").tag(EraserMode.stroke)
-                Text("Eraser: Precise").tag(EraserMode.pixel)
-            }
-        } label: {
-            Image(systemName: "ellipsis.circle")
-        }
-        .accessibilityIdentifier("more-menu")
     }
 }
