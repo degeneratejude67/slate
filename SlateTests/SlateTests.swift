@@ -1,4 +1,5 @@
 import XCTest
+import CoreText
 import PDFKit
 import PencilKit
 @testable import Slate
