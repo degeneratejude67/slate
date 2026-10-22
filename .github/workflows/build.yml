@@ -1,0 +1,77 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          brew install xcodegen
+          xcodebuild -version
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build unsigned IPA
+        run: |
+          xcodebuild -project Slate.xcodeproj -scheme Slate -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > build.log 2>&1 || { grep -E "error:|fatal" build.log | sort -u | head -80; tail -30 build.log; exit 1; }
+          grep -E "warning:.*/Slate/" build.log | sort -u | head -40 || true
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/Slate.app Payload/
+          zip -qry Slate.ipa Payload
+          ls -l Slate.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Slate-ipa
+          path: Slate.ipa
+
+      - name: Pick iPad simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 .github/pick_ipad.py)
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true
+
+      - name: Test on iPad simulator
+        run: |
+          mkdir -p shots
+          STATUS=0
+          TEST_RUNNER_SCREENSHOT_DIR="$PWD/shots" xcodebuild test -project Slate.xcodeproj -scheme Slate \
+            -destination "id=${{ steps.sim.outputs.udid }}" -derivedDataPath build-test \
+            -resultBundlePath TestResults.xcresult > test.log 2>&1 || STATUS=$?
+          grep -E "error:|Test Case .*(passed|failed)|Executed|XCTAssert" test.log | head -120 || true
+          if [ "$STATUS" -ne 0 ]; then tail -40 test.log; fi
+          exit $STATUS
+
+      - name: Export test attachments
+        if: always()
+        run: |
+          mkdir -p attachments
+          xcrun xcresulttool export attachments --path TestResults.xcresult --output-path attachments > /dev/null 2>&1 || true
+          ls shots attachments || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-output
+          path: |
+            shots
+            attachments
+            build.log
+            test.log
